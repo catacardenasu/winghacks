@@ -1,0 +1,155 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>GeNiUS - Chemistry QuickDraw</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="app-shell">
+    <div class="app-card">
+      <div class="screen-stage">
+        <section id="home-screen" class="screen active" aria-labelledby="title">
+          <header class="home-header">
+            <div class="genius-logo" aria-label="GeNiUS periodic tile logo">
+              <div class="element-tile"><span class="atomic">32</span><span class="symbol">Ge</span><span class="name">Germanium</span></div>
+              <div class="element-tile"><span class="atomic">28</span><span class="symbol">Ni</span><span class="name">Nickel</span></div>
+              <div class="element-tile"><span class="atomic">92</span><span class="symbol">U</span><span class="name">Uranium</span></div>
+              <div class="element-tile"><span class="atomic">16</span><span class="symbol">S</span><span class="name">Sulfur</span></div>
+            </div>
+            <p class="subtitle">Sketch chemistry structures and sharpen your intuition.</p>
+          </header>
+
+          <div class="mode-toggle" role="group" aria-label="Game mode">
+            <button id="solo-mode-btn" class="btn mode-btn active" type="button">Solo Mode</button>
+            <button id="multiplayer-mode-btn" class="btn mode-btn" type="button">Multiplayer</button>
+          </div>
+
+          <div class="mode-toggle" role="group" aria-label="Drawing mode">
+            <button id="canvas-mode-btn" class="btn mode-btn active" type="button">Canvas Mode</button>
+            <button id="whiteboard-mode-btn" class="btn mode-btn" type="button">Whiteboard Mode (Beta)</button>
+          </div>
+
+          <div class="field-group">
+            <label for="player-name">Your Name</label>
+            <input id="player-name" type="text" maxlength="20" placeholder="Player 1" />
+          </div>
+
+          <div class="field-group">
+            <label for="category-select">Category</label>
+            <select id="category-select"></select>
+          </div>
+
+          <div class="field-group">
+            <label for="round-count-select">Rounds</label>
+            <select id="round-count-select">
+              <option value="3">3 rounds</option>
+              <option value="5" selected>5 rounds</option>
+              <option value="10">10 rounds</option>
+            </select>
+          </div>
+
+          <section id="multiplayer-panel" class="multiplayer-panel collapsed" aria-labelledby="room-title">
+            <h2 id="room-title">Room Setup</h2>
+            <div class="room-controls">
+              <button id="create-room-btn" class="btn btn-secondary" type="button">Create Room</button>
+              <div class="join-row">
+                <input id="room-code-input" type="text" maxlength="6" placeholder="Room code" />
+                <button id="join-room-btn" class="btn btn-secondary" type="button">Join Room</button>
+              </div>
+            </div>
+            <p id="room-status" class="room-status">No room selected. Create or join one.</p>
+          </section>
+
+          <div class="controls controls-start gap-sm">
+            <button id="start-btn" class="btn btn-primary" type="button">Start Match</button>
+            <button id="review-btn" class="btn btn-secondary" type="button">Review Missed (0)</button>
+          </div>
+        </section>
+
+        <section id="game-screen" class="screen" aria-live="polite">
+          <header class="game-header">
+            <div>
+              <p class="label" id="round-label">Round 1 of 5</p>
+              <h2 id="molecule-name">-</h2>
+              <p id="molecule-formula" class="result-note">Formula: -</p>
+            </div>
+            <div class="game-meta">
+              <div id="room-badge" class="room-badge">Mode: Solo</div>
+              <div id="timer" class="timer">90s</div>
+            </div>
+          </header>
+
+          <div class="hud-row">
+            <div id="total-score-hud" class="pill">Total: 0</div>
+            <div id="xp-hud" class="pill">XP: 0</div>
+            <div id="streak-indicator" class="pill streak">Streak x1</div>
+          </div>
+
+          <div id="energy-wrap" class="energy-wrap" aria-label="Lab stability bar"><div id="energy-bar" class="energy-bar"></div></div>
+          <p id="status-message" class="status-message">Sketch your best structure.</p>
+
+          <div class="canvas-zone">
+            <canvas id="draw-canvas" width="900" height="560"></canvas>
+            <video id="whiteboard-video" class="hidden" autoplay playsinline muted></video>
+            <div id="analyzing-overlay" class="analyzing-overlay" aria-hidden="true">
+              <p id="overlay-message" class="analyzing-title">Analyzing Structure<span class="dot-flow"><span>.</span><span>.</span><span>.</span></span></p>
+              <div id="waiting-progress" class="waiting-progress" hidden>
+                <span></span><span></span><span></span>
+              </div>
+            </div>
+          </div>
+
+          <div class="controls">
+            <button id="clear-btn" class="btn btn-secondary" type="button">Clear Canvas</button>
+            <button id="submit-btn" class="btn btn-submit" type="button">Submit Drawing</button>
+          </div>
+        </section>
+
+        <section id="results-screen" class="screen" aria-live="polite">
+          <h2 id="results-title">Round Results</h2>
+          <p id="result-molecule"></p>
+          <p id="result-room"></p>
+
+          <div class="scoreboard" aria-label="Scoreboard">
+            <div class="score-row"><span id="result-player-name">You</span><strong id="result-player-score">0</strong></div>
+            <div id="result-opponent-row" class="score-row"><span id="result-opponent-name">Opponent</span><strong id="result-opponent-score">0</strong></div>
+          </div>
+
+          <p id="round-feedback" class="round-feedback">Solid Bonds!</p>
+          <p id="result-score-note" class="result-note">Round score: 0</p>
+          <p id="result-totals" class="result-totals">Total: 0 | XP: 0</p>
+          <p id="result-streak" class="result-note">Streak: 0</p>
+          <p id="solo-encouragement" class="result-outcome"></p>
+          <p id="final-outcome" class="result-outcome"></p>
+
+          <h3>Your Drawing</h3>
+          <img id="result-preview" alt="Your drawing preview" />
+
+          <h3>Correct Structure</h3>
+          <img id="reference-preview" alt="Correct structure reference" />
+          <p id="reference-fallback" class="result-note" hidden></p>
+
+          <div class="controls controls-start gap-sm wrap">
+            <button id="add-review-btn" class="btn btn-secondary" type="button">Add to Review Folder</button>
+            <button id="next-round-btn" class="btn btn-primary" type="button">Next Round</button>
+            <button id="play-again-btn" class="btn btn-secondary" type="button">New Match</button>
+          </div>
+        </section>
+
+        <section id="review-screen" class="screen" aria-live="polite">
+          <h2>Review Folder</h2>
+          <p class="result-note">Practice molecules you saved manually for focused improvement.</p>
+          <div id="review-list" class="review-list"></div>
+          <div class="controls controls-start">
+            <button id="review-back-btn" class="btn btn-secondary" type="button">Back</button>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+
+  <script type="module" src="main.js"></script>
+</body>
+</html>
