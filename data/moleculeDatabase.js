@@ -1,55 +1,164 @@
-﻿function createMolecule(category, name, formula, referenceImage = "assets/placeholder-structure.png") {
-  return { name, formula, category, referenceImage };
+﻿function parseAtomCounts(formula = "") {
+  const text = String(formula || "")
+    .replace(/\s+/g, "")
+    .replace(/\([^)]*\)/g, "")
+    .replace(/[+\-].*$/, "");
+
+  const counts = {};
+  const regex = /([A-Z][a-z]?)(\d*)/g;
+  let match;
+
+  while ((match = regex.exec(text)) !== null) {
+    const atom = match[1];
+    const amount = match[2] ? Number(match[2]) : 1;
+    counts[atom] = (counts[atom] || 0) + amount;
+  }
+
+  return counts;
+}
+
+const canonicalOverrides = {
+  "Water": {
+    atomCounts: { H: 2, O: 1 },
+    bonds: [{ from: "O", to: "H", type: "single" }, { from: "O", to: "H", type: "single" }],
+    geometry: "bent",
+    lonePairs: { O: 2 },
+  },
+  "Carbon Dioxide": {
+    atomCounts: { C: 1, O: 2 },
+    bonds: [{ from: "C", to: "O", type: "double" }, { from: "C", to: "O", type: "double" }],
+    geometry: "linear",
+  },
+  "Ammonia": {
+    atomCounts: { N: 1, H: 3 },
+    bonds: [
+      { from: "N", to: "H", type: "single" },
+      { from: "N", to: "H", type: "single" },
+      { from: "N", to: "H", type: "single" },
+    ],
+    geometry: "trigonal pyramidal",
+    lonePairs: { N: 1 },
+  },
+  "Hydrogen Cyanide": {
+    atomCounts: { H: 1, C: 1, N: 1 },
+    bonds: [{ from: "H", to: "C", type: "single" }, { from: "C", to: "N", type: "triple" }],
+    geometry: "linear",
+  },
+  "Carbon Disulfide": {
+    atomCounts: { C: 1, S: 2 },
+    bonds: [{ from: "C", to: "S", type: "double" }, { from: "C", to: "S", type: "double" }],
+    geometry: "linear",
+  },
+  "Methane": {
+    atomCounts: { C: 1, H: 4 },
+    bonds: [
+      { from: "C", to: "H", type: "single" },
+      { from: "C", to: "H", type: "single" },
+      { from: "C", to: "H", type: "single" },
+      { from: "C", to: "H", type: "single" },
+    ],
+    geometry: "tetrahedral",
+  },
+  "Boron Trifluoride": {
+    atomCounts: { B: 1, F: 3 },
+    bonds: [
+      { from: "B", to: "F", type: "single" },
+      { from: "B", to: "F", type: "single" },
+      { from: "B", to: "F", type: "single" },
+    ],
+    geometry: "trigonal planar",
+  },
+  "Ethene": {
+    atomCounts: { C: 2, H: 4 },
+    bonds: [{ from: "C", to: "C", type: "double" }],
+    geometry: "trigonal planar",
+  },
+  "Ethyne": {
+    atomCounts: { C: 2, H: 2 },
+    bonds: [{ from: "C", to: "C", type: "triple" }],
+    geometry: "linear",
+  },
+  "Formaldehyde": {
+    atomCounts: { C: 1, H: 2, O: 1 },
+    bonds: [{ from: "C", to: "O", type: "double" }],
+    geometry: "trigonal planar",
+  },
+};
+
+function fallbackCanonical(formula) {
+  return {
+    atomCounts: parseAtomCounts(formula),
+    bonds: [],
+  };
+}
+
+function createMolecule(category, name, formula, referenceImage = "assets/placeholder-structure.png", referenceDescription = "") {
+  return {
+    name,
+    formula,
+    category,
+    referenceImage,
+    referenceDescription,
+    canonical: canonicalOverrides[name] || fallbackCanonical(formula),
+  };
 }
 
 function mapMolecules(categoryLabel, items) {
-  return items.map((item) => createMolecule(categoryLabel, item.name, item.formula, item.referenceImage));
+  return items.map((item) =>
+    createMolecule(
+      categoryLabel,
+      item.name,
+      item.formula,
+      item.referenceImage,
+      item.referenceDescription
+    )
+  );
 }
 
 export const moleculeDatabase = {
   lewisStructures: {
     label: "Lewis Structures",
     molecules: mapMolecules("Lewis Structures", [
-      { name: "Water", formula: "H2O" },
-      { name: "Carbon Dioxide", formula: "CO2" },
-      { name: "Ammonia", formula: "NH3" },
-      { name: "Sulfur Dioxide", formula: "SO2" },
-      { name: "Nitrogen Dioxide", formula: "NO2" },
-      { name: "Hydrogen Cyanide", formula: "HCN" },
-      { name: "Ozone", formula: "O3" },
-      { name: "Carbon Disulfide", formula: "CS2" },
-      { name: "Phosphorus Trichloride", formula: "PCl3" },
-      { name: "Sulfur Tetrafluoride", formula: "SF4" },
+      { name: "Water", formula: "H2O", referenceDescription: "oxygen in center with two single bonds to hydrogens (bent shape)" },
+      { name: "Carbon Dioxide", formula: "CO2", referenceDescription: "linear O=C=O" },
+      { name: "Ammonia", formula: "NH3", referenceDescription: "nitrogen with three single bonds and a lone pair (trigonal pyramidal)" },
+      { name: "Sulfur Dioxide", formula: "SO2", referenceDescription: "bent structure with S double-bonded to oxygens" },
+      { name: "Nitrogen Dioxide", formula: "NO2", referenceDescription: "bent, odd-electron structure" },
+      { name: "Hydrogen Cyanide", formula: "HCN", referenceDescription: "linear H-C≡N triple bond" },
+      { name: "Ozone", formula: "O3", referenceDescription: "bent three-oxygen chain" },
+      { name: "Carbon Disulfide", formula: "CS2", referenceDescription: "linear S=C=S" },
+      { name: "Phosphorus Trichloride", formula: "PCl3", referenceDescription: "phosphorus center with three single bonds to chlorines" },
+      { name: "Sulfur Tetrafluoride", formula: "SF4", referenceDescription: "see-saw shape with sulfur center and four fluorines" },
     ]),
   },
   molecularGeometry: {
     label: "Molecular Geometry",
     molecules: mapMolecules("Molecular Geometry", [
-      { name: "Methane", formula: "CH4" },
-      { name: "Boron Trifluoride", formula: "BF3" },
-      { name: "Phosphorus Pentachloride", formula: "PCl5" },
-      { name: "Sulfur Hexafluoride", formula: "SF6" },
-      { name: "Ammonia", formula: "NH3" },
-      { name: "Water", formula: "H2O" },
-      { name: "Xenon Tetrafluoride", formula: "XeF4" },
-      { name: "Carbon Dioxide", formula: "CO2" },
-      { name: "Bromine Pentafluoride", formula: "BrF5" },
-      { name: "Chlorine Trifluoride", formula: "ClF3" },
+      { name: "Methane", formula: "CH4", referenceDescription: "tetrahedral central carbon with four single bonds" },
+      { name: "Boron Trifluoride", formula: "BF3", referenceDescription: "trigonal planar boron with three fluorines" },
+      { name: "Phosphorus Pentachloride", formula: "PCl5", referenceDescription: "trigonal bipyramidal" },
+      { name: "Sulfur Hexafluoride", formula: "SF6", referenceDescription: "octahedral central sulfur" },
+      { name: "Ammonia", formula: "NH3", referenceDescription: "trigonal pyramidal nitrogen" },
+      { name: "Water", formula: "H2O", referenceDescription: "bent molecule with oxygen center" },
+      { name: "Xenon Tetrafluoride", formula: "XeF4", referenceDescription: "square planar" },
+      { name: "Carbon Dioxide", formula: "CO2", referenceDescription: "linear O=C=O" },
+      { name: "Bromine Pentafluoride", formula: "BrF5", referenceDescription: "see-saw shape" },
+      { name: "Chlorine Trifluoride", formula: "ClF3", referenceDescription: "T-shaped geometry" },
     ]),
   },
   organicCompounds: {
     label: "Organic Compounds",
     molecules: mapMolecules("Organic Compounds", [
-      { name: "Methane", formula: "CH4" },
-      { name: "Ethane", formula: "C2H6" },
-      { name: "Ethene", formula: "C2H4" },
-      { name: "Ethyne", formula: "C2H2" },
-      { name: "Ethanol", formula: "C2H5OH" },
-      { name: "Acetone", formula: "C3H6O" },
-      { name: "Benzene", formula: "C6H6" },
-      { name: "Toluene", formula: "C7H8" },
-      { name: "Propanoic Acid", formula: "C3H6O2" },
-      { name: "Formaldehyde", formula: "CH2O" },
+      { name: "Methane", formula: "CH4", referenceDescription: "single central carbon with four single bonds (tetrahedral)" },
+      { name: "Ethane", formula: "C2H6", referenceDescription: "two carbons connected with a single bond, each with single bonds to hydrogens" },
+      { name: "Ethene", formula: "C2H4", referenceDescription: "two carbons connected with a double bond" },
+      { name: "Ethyne", formula: "C2H2", referenceDescription: "two carbons connected with a triple bond" },
+      { name: "Ethanol", formula: "C2H5OH", referenceDescription: "two-carbon chain with an -OH group" },
+      { name: "Acetone", formula: "C3H6O", referenceDescription: "three-carbon chain with a central carbonyl (C=O)" },
+      { name: "Benzene", formula: "C6H6", referenceDescription: "six-membered aromatic ring (hexagon) with alternating double bonds" },
+      { name: "Toluene", formula: "C7H8", referenceDescription: "benzene ring with a methyl substituent" },
+      { name: "Propanoic Acid", formula: "C3H6O2", referenceDescription: "three-carbon chain with a terminal carboxylic acid (-COOH)" },
+      { name: "Formaldehyde", formula: "CH2O", referenceDescription: "single carbon with a double-bonded oxygen (aldehyde)" },
     ]),
   },
   polyatomicIons: {

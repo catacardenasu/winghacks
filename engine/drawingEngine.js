@@ -1,4 +1,4 @@
-﻿export class DrawingEngine {
+export class DrawingEngine {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
@@ -70,5 +70,40 @@
 
   captureDataUrl() {
     return this.canvas.toDataURL("image/png");
+  }
+
+  renderLonePairs(atom, atomRadius = 20) {
+    const pairCount = Math.max(0, Math.floor(Number(atom?.lonePairs) || 0));
+    if (pairCount === 0) return;
+
+    const pairRadius = atomRadius + 10;
+    const dotRadius = 2.5;
+    const pairSeparation = 6;
+    const angleStep = (Math.PI * 2) / pairCount;
+
+    this.ctx.fillStyle = "#1f2a37";
+
+    for (let i = 0; i < pairCount; i += 1) {
+      const angle = i * angleStep;
+      const centerX = atom.x + Math.cos(angle) * pairRadius;
+      const centerY = atom.y + Math.sin(angle) * pairRadius;
+
+      const perpX = -Math.sin(angle);
+      const perpY = Math.cos(angle);
+      const halfGap = pairSeparation / 2;
+
+      const dot1X = centerX + perpX * halfGap;
+      const dot1Y = centerY + perpY * halfGap;
+      const dot2X = centerX - perpX * halfGap;
+      const dot2Y = centerY - perpY * halfGap;
+
+      this.ctx.beginPath();
+      this.ctx.arc(dot1X, dot1Y, dotRadius, 0, Math.PI * 2);
+      this.ctx.fill();
+
+      this.ctx.beginPath();
+      this.ctx.arc(dot2X, dot2Y, dotRadius, 0, Math.PI * 2);
+      this.ctx.fill();
+    }
   }
 }

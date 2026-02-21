@@ -42,10 +42,10 @@
     };
   }
 
-  finishRound(drawingDataUrl) {
+  finishRound(drawingDataUrl, externalScore = null) {
     this.lastDrawingDataUrl = drawingDataUrl;
 
-    const score = this.calculatePlaceholderScore();
+    const score = externalScore !== null ? Number(externalScore) : this.calculatePlaceholderScore();
 
     if (score >= 80) {
       this.streak += 1;

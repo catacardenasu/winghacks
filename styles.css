@@ -309,13 +309,6 @@ canvas {
   touch-action: none;
 }
 
-#whiteboard-video {
-  width: 100%;
-  border-radius: 16px;
-  border: 2px solid var(--border);
-  background: #000;
-}
-
 .analyzing-overlay {
   position: absolute;
   inset: 0;

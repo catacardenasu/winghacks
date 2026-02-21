@@ -26,11 +26,6 @@
             <button id="multiplayer-mode-btn" class="btn mode-btn" type="button">Multiplayer</button>
           </div>
 
-          <div class="mode-toggle" role="group" aria-label="Drawing mode">
-            <button id="canvas-mode-btn" class="btn mode-btn active" type="button">Canvas Mode</button>
-            <button id="whiteboard-mode-btn" class="btn mode-btn" type="button">Whiteboard Mode (Beta)</button>
-          </div>
-
           <div class="field-group">
             <label for="player-name">Your Name</label>
             <input id="player-name" type="text" maxlength="20" placeholder="Player 1" />
@@ -92,7 +87,6 @@
 
           <div class="canvas-zone">
             <canvas id="draw-canvas" width="900" height="560"></canvas>
-            <video id="whiteboard-video" class="hidden" autoplay playsinline muted></video>
             <div id="analyzing-overlay" class="analyzing-overlay" aria-hidden="true">
               <p id="overlay-message" class="analyzing-title">Analyzing Structure<span class="dot-flow"><span>.</span><span>.</span><span>.</span></span></p>
               <div id="waiting-progress" class="waiting-progress" hidden>
@@ -118,6 +112,7 @@
           </div>
 
           <p id="round-feedback" class="round-feedback">Solid Bonds!</p>
+          <p id="ai-guess" class="result-note" hidden></p>
           <p id="result-score-note" class="result-note">Round score: 0</p>
           <p id="result-totals" class="result-totals">Total: 0 | XP: 0</p>
           <p id="result-streak" class="result-note">Streak: 0</p>

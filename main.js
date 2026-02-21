@@ -4,9 +4,29 @@ import { TimerEngine } from "./engine/timerEngine.js";
 import { DrawingEngine } from "./engine/drawingEngine.js";
 import { MultiplayerEngine } from "./engine/multiplayerEngine.js";
 import { addToReview, getReviewList, removeFromReview } from "./engine/reviewEngine.js";
-import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({});
+// Client-side helper: send structured drawing for deterministic grading.
+async function evaluateDrawingWithServer({ parsedDrawing = null, molecule = null, categoryKey = null }) {
+  const payload = {
+    moleculeName: molecule?.name || "",
+    moleculeFormula: molecule?.formula || "",
+    category: categoryKey || molecule?.category || "",
+    parsedDrawing,
+  };
+  console.log("PARSED DRAWING BEING SENT:", parsedDrawing);
+  const response = await fetch("http://localhost:3000/api/grade", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+
+  if (!response.ok) {
+    throw new Error("Backend grading failed. Status: " + response.status);
+  }
+
+  const data = await response.json();
+  return data;
+}
 const ROUND_SECONDS = 90;
 const ANALYZE_DELAY_MS = 1500;
 
@@ -24,8 +44,6 @@ const multiplayerPanel = document.getElementById("multiplayer-panel");
 
 const soloModeBtn = document.getElementById("solo-mode-btn");
 const multiplayerModeBtn = document.getElementById("multiplayer-mode-btn");
-const canvasModeBtn = document.getElementById("canvas-mode-btn");
-const whiteboardModeBtn = document.getElementById("whiteboard-mode-btn");
 const createRoomBtn = document.getElementById("create-room-btn");
 const joinRoomBtn = document.getElementById("join-room-btn");
 const startBtn = document.getElementById("start-btn");
@@ -52,7 +70,6 @@ const analyzingOverlay = document.getElementById("analyzing-overlay");
 const overlayMessage = document.getElementById("overlay-message");
 const waitingProgress = document.getElementById("waiting-progress");
 const canvas = document.getElementById("draw-canvas");
-const whiteboardVideo = document.getElementById("whiteboard-video");
 
 const resultsTitle = document.getElementById("results-title");
 const resultMolecule = document.getElementById("result-molecule");
@@ -66,6 +83,7 @@ const resultOpponentRow = document.getElementById("result-opponent-row");
 const resultOpponentName = document.getElementById("result-opponent-name");
 const resultOpponentScore = document.getElementById("result-opponent-score");
 const roundFeedback = document.getElementById("round-feedback");
+const aiGuessEl = document.getElementById("ai-guess");
 const resultScoreNote = document.getElementById("result-score-note");
 const resultTotals = document.getElementById("result-totals");
 const resultStreak = document.getElementById("result-streak");
@@ -77,17 +95,16 @@ const reviewList = document.getElementById("review-list");
 const gameEngine = new GameEngine(5);
 const multiplayerEngine = new MultiplayerEngine();
 const drawingEngine = new DrawingEngine(canvas);
+const canvasCtx = canvas.getContext("2d");
 
 const session = {
   mode: "solo",
-  drawingMode: "canvas",
   roomCode: "",
   localPlayerId: "",
   localPlayerName: "Player 1",
   categoryKey: "",
   selectedRoundCount: 5,
   practiceTarget: null,
-  webcamStream: null,
 };
 
 const roundState = {
@@ -97,6 +114,14 @@ const roundState = {
   roundStartMs: 0,
   lastRoundResult: null,
   attempts: {},
+};
+
+const canvasBuilder = {
+  atoms: [],
+  bonds: [],
+  selectedAtomId: null,
+  enabled: false,
+  atomIdCounter: 1,
 };
 
 const timerEngine = new TimerEngine(
@@ -137,14 +162,375 @@ function setMode(mode) {
   updateRoomStatus("No room selected. Create or join one.");
 }
 
-function setDrawingMode(mode) {
-  session.drawingMode = mode;
-  canvasModeBtn.classList.toggle("active", mode === "canvas");
-  whiteboardModeBtn.classList.toggle("active", mode === "whiteboard");
+function resetCanvasBuilder() {
+  canvasBuilder.atoms = [];
+  canvasBuilder.bonds = [];
+  canvasBuilder.selectedAtomId = null;
+  canvasBuilder.atomIdCounter = 1;
+  renderCanvasBuilder();
+}
 
-  if (mode === "canvas") {
-    stopWebcamStream();
+function setCanvasBuilderEnabled(enabled) {
+  canvasBuilder.enabled = enabled;
+  if (!enabled) {
+    canvasBuilder.selectedAtomId = null;
+    renderCanvasBuilder();
   }
+}
+
+function getCanvasPoint(event) {
+  const rect = canvas.getBoundingClientRect();
+  const scaleX = canvas.width / rect.width;
+  const scaleY = canvas.height / rect.height;
+
+  return {
+    x: (event.clientX - rect.left) * scaleX,
+    y: (event.clientY - rect.top) * scaleY,
+  };
+}
+
+function getAtomAtPoint(point, radius = 24) {
+  for (const atom of canvasBuilder.atoms) {
+    const dx = point.x - atom.x;
+    const dy = point.y - atom.y;
+    if (Math.sqrt(dx * dx + dy * dy) <= radius) {
+      return atom;
+    }
+  }
+  return null;
+}
+
+function renderBondLine(atomA, atomB, offset = 0) {
+  const dx = atomB.x - atomA.x;
+  const dy = atomB.y - atomA.y;
+  const length = Math.sqrt(dx * dx + dy * dy) || 1;
+  const ux = dx / length;
+  const uy = dy / length;
+  const perpX = -uy * offset;
+  const perpY = ux * offset;
+
+  canvasCtx.beginPath();
+  canvasCtx.moveTo(atomA.x + perpX, atomA.y + perpY);
+  canvasCtx.lineTo(atomB.x + perpX, atomB.y + perpY);
+  canvasCtx.stroke();
+}
+
+function renderCanvasBuilder() {
+  canvasCtx.clearRect(0, 0, canvas.width, canvas.height);
+  canvasCtx.fillStyle = "#ffffff";
+  canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+  canvasCtx.strokeStyle = "#1f2a37";
+  canvasCtx.lineWidth = 3;
+  const atomRadius = 20;
+
+  for (const bond of canvasBuilder.bonds) {
+    const atomA = canvasBuilder.atoms.find((atom) => atom.id === bond.from);
+    const atomB = canvasBuilder.atoms.find((atom) => atom.id === bond.to);
+    if (!atomA || !atomB) continue;
+
+    if (bond.type === "double") {
+      renderBondLine(atomA, atomB, 4);
+      renderBondLine(atomA, atomB, -4);
+    } else if (bond.type === "triple") {
+      renderBondLine(atomA, atomB, 0);
+      renderBondLine(atomA, atomB, 6);
+      renderBondLine(atomA, atomB, -6);
+    } else {
+      renderBondLine(atomA, atomB, 0);
+    }
+  }
+
+  for (const atom of canvasBuilder.atoms) {
+    const selected = atom.id === canvasBuilder.selectedAtomId;
+    canvasCtx.beginPath();
+    canvasCtx.arc(atom.x, atom.y, atomRadius, 0, Math.PI * 2);
+    canvasCtx.fillStyle = selected ? "#dce9ff" : "#f3f7ff";
+    canvasCtx.fill();
+    canvasCtx.lineWidth = selected ? 3 : 2;
+    canvasCtx.strokeStyle = selected ? "#3f7cff" : "#96a8c4";
+    canvasCtx.stroke();
+
+    canvasCtx.fillStyle = "#1f2a37";
+    canvasCtx.font = "bold 14px Segoe UI";
+    canvasCtx.textAlign = "center";
+    canvasCtx.textBaseline = "middle";
+    canvasCtx.fillText(atom.element, atom.x, atom.y);
+
+    if (atom.lonePairs && atom.lonePairs > 0) {
+      drawingEngine.renderLonePairs(atom, atomRadius);
+    }
+  }
+}
+
+function addAtom(point) {
+  const elementInput = window.prompt("Element symbol:", "C");
+  if (elementInput === null) return;
+
+  const element = elementInput.trim();
+  if (!/^[A-Z][a-z]?$/.test(element)) {
+    window.alert("Please enter a valid element symbol (e.g., C, O, Cl).");
+    return;
+  }
+
+  canvasBuilder.atoms.push({
+    id: `a-${canvasBuilder.atomIdCounter++}`,
+    symbol: element,
+    element,
+    x: point.x,
+    y: point.y,
+    lonePairs: 0,
+  });
+  renderCanvasBuilder();
+}
+
+function addOrUpdateBond(fromId, toId) {
+  const bondInput = window.prompt("Bond type: single, double, or triple", "single");
+  if (bondInput === null) return;
+
+  const type = bondInput.trim().toLowerCase();
+  if (!["single", "double", "triple"].includes(type)) {
+    window.alert("Bond type must be single, double, or triple.");
+    return;
+  }
+
+  const existingIndex = canvasBuilder.bonds.findIndex(
+    (bond) =>
+      (bond.from === fromId && bond.to === toId) ||
+      (bond.from === toId && bond.to === fromId)
+  );
+
+  if (existingIndex >= 0) {
+    canvasBuilder.bonds[existingIndex] = { from: fromId, to: toId, type };
+  } else {
+    canvasBuilder.bonds.push({ from: fromId, to: toId, type });
+  }
+}
+
+function handleCanvasBuilderClick(event) {
+  if (!canvasBuilder.enabled) return;
+
+  const point = getCanvasPoint(event);
+  const atom = getAtomAtPoint(point);
+
+  if (!atom) {
+    canvasBuilder.selectedAtomId = null;
+    addAtom(point);
+    return;
+  }
+
+  if (!canvasBuilder.selectedAtomId) {
+    canvasBuilder.selectedAtomId = atom.id;
+    renderCanvasBuilder();
+    return;
+  }
+
+  if (canvasBuilder.selectedAtomId === atom.id) {
+    canvasBuilder.selectedAtomId = null;
+    renderCanvasBuilder();
+    return;
+  }
+
+  addOrUpdateBond(canvasBuilder.selectedAtomId, atom.id);
+  canvasBuilder.selectedAtomId = null;
+  renderCanvasBuilder();
+}
+
+function handleCanvasBuilderDoubleClick(event) {
+  if (!canvasBuilder.enabled) return;
+
+  const point = getCanvasPoint(event);
+  const atom = getAtomAtPoint(point);
+  if (!atom) return;
+
+  const lonePairInput = window.prompt("Enter number of lone pairs for this atom:", String(atom.lonePairs || 0));
+  if (lonePairInput === null) return;
+
+  const parsed = Number(lonePairInput);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    window.alert("Lone pairs must be a non-negative number.");
+    return;
+  }
+
+  atom.lonePairs = Math.floor(parsed);
+  renderCanvasBuilder();
+}
+
+function buildParsedDrawing(atoms, bonds) {
+  const parsedDrawing = {
+    atoms: atoms.map((atom) => ({
+      id: atom.id,
+      element: atom.symbol || atom.element,
+    })),
+    bonds: bonds.map((bond) => ({
+      from: bond.from,
+      to: bond.to,
+      type: bond.type,
+    })),
+  };
+
+  console.log("parsedDrawing before submission:", parsedDrawing);
+
+  return parsedDrawing;
+}
+
+function escapeHtml(text) {
+  return String(text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function renderFeedbackList(messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return "";
+  const listItems = messages.map((message) => `<li>${escapeHtml(message)}</li>`).join("");
+  return `<ul>${listItems}</ul>`;
+}
+
+function getResultColor(passFailText) {
+  return passFailText === "PASS" ? "#1f8a3b" : "#c62828";
+}
+
+function setPassFailDisplay(passFailText, failFeedback, aiExplanation = null) {
+  const color = getResultColor(passFailText);
+  resultScoreNote.style.color = color;
+  roundFeedback.style.color = color;
+  resultScoreNote.textContent = passFailText;
+  roundFeedback.textContent = passFailText;
+
+  if (passFailText === "FAIL" && failFeedback.length > 0) {
+    resultTotals.innerHTML = renderFeedbackList(failFeedback);
+  } else {
+    resultTotals.textContent = "";
+  }
+
+  if (passFailText === "FAIL" && aiExplanation) {
+    aiGuessEl.hidden = false;
+    aiGuessEl.style.opacity = "0.8";
+    aiGuessEl.textContent = aiExplanation;
+  } else {
+    aiGuessEl.hidden = true;
+    aiGuessEl.textContent = "";
+  }
+}
+
+function getPassFailFromResult(roundResult) {
+  return roundResult.passed === true ? "PASS" : "FAIL";
+}
+
+function getFailFeedback(roundResult) {
+  return Array.isArray(roundResult.structuralFeedback) ? roundResult.structuralFeedback : [];
+}
+
+function getRoundWord(roundResult) {
+  return `Round ${roundResult.roundNumber} of ${roundResult.totalRounds}`;
+}
+
+function setResultHeader(roundResult, scoreboard) {
+  const roundWord = getRoundWord(roundResult);
+  resultsTitle.textContent = roundResult.isFinalRound ? "Final Results" : "Round Results";
+  resultMolecule.textContent = `${roundWord} | ${roundResult.molecule.name} (${roundResult.molecule.formula})`;
+  resultRoom.textContent = session.mode === "multiplayer" ? `Room: ${scoreboard.roomCode}` : "Mode: Solo";
+}
+
+function setResultPlayers(scoreboard) {
+  resultPlayerName.textContent = scoreboard.localPlayer.name;
+  animateValue(resultPlayerScore, scoreboard.localPlayer.score, 850);
+}
+
+function clearStreakDisplays() {
+  resultStreak.textContent = "";
+}
+
+function setResultOutcome(roundResult, scoreboard) {
+  if (session.mode === "multiplayer" && scoreboard.opponent) {
+    resultOpponentRow.style.display = "flex";
+    resultOpponentName.textContent = scoreboard.opponent.name;
+    animateValue(resultOpponentScore, scoreboard.opponent.score, 850);
+    soloEncouragement.textContent = "";
+
+    if (roundResult.isFinalRound) {
+      const diff = scoreboard.localPlayer.score - scoreboard.opponent.score;
+      if (diff > 0) finalOutcome.textContent = `Match win by ${diff} points.`;
+      else if (diff < 0) finalOutcome.textContent = `Opponent wins by ${Math.abs(diff)} points.`;
+      else finalOutcome.textContent = "Draw match. Perfect rivalry.";
+    } else {
+      finalOutcome.textContent = "";
+    }
+    return;
+  }
+
+  resultOpponentRow.style.display = "none";
+  finalOutcome.textContent = "";
+  soloEncouragement.textContent = "";
+}
+
+function renderRoundResults(roundResult, scoreboard) {
+  const passFailText = getPassFailFromResult(roundResult);
+  const failFeedback = getFailFeedback(roundResult);
+
+  setResultHeader(roundResult, scoreboard);
+  setResultPlayers(scoreboard);
+
+  addReviewBtn.disabled = false;
+  addReviewBtn.textContent = "Add to Review Folder";
+
+  setPassFailDisplay(passFailText, failFeedback, roundResult.aiExplanation);
+  clearStreakDisplays();
+
+  if (roundResult.streak > 0) {
+    streakIndicator.classList.remove("boost");
+    void streakIndicator.offsetWidth;
+    streakIndicator.classList.add("boost");
+  }
+
+  setResultOutcome(roundResult, scoreboard);
+
+  if (roundResult.isFinalRound) {
+    nextRoundBtn.style.display = "none";
+    playAgainBtn.textContent = "Play New Match";
+  } else {
+    nextRoundBtn.style.display = "inline-flex";
+    playAgainBtn.textContent = "End Match";
+  }
+
+  if (roundResult.drawingDataUrl) {
+    resultPreview.src = roundResult.drawingDataUrl;
+    resultPreview.style.display = "block";
+  } else {
+    resultPreview.removeAttribute("src");
+    resultPreview.style.display = "none";
+  }
+  renderReference(roundResult.molecule);
+}
+
+function renderReference(molecule) {
+  const fallbackText = `Formula reference: ${molecule.formula}`;
+
+  referenceFallback.hidden = true;
+  referencePreview.style.display = "block";
+
+  if (!molecule.referenceImage) {
+    referencePreview.style.display = "none";
+    referenceFallback.hidden = false;
+    referenceFallback.textContent = fallbackText;
+    return;
+  }
+
+  referencePreview.onload = () => {
+    referencePreview.style.display = "block";
+    referenceFallback.hidden = true;
+  };
+
+  referencePreview.onerror = () => {
+    referencePreview.style.display = "none";
+    referenceFallback.hidden = false;
+    referenceFallback.textContent = fallbackText;
+  };
+
+  referencePreview.src = molecule.referenceImage;
 }
 
 function populateCategoryDropdown() {
@@ -190,8 +576,10 @@ function setStatusMessage(message, critical = false) {
 }
 
 function setRoundInteractionEnabled(isEnabled) {
-  drawingEngine.setEnabled(isEnabled);
-  clearBtn.disabled = !isEnabled || session.drawingMode !== "canvas";
+  // Canvas mode is now structured builder, so free-draw is disabled there.
+  drawingEngine.setEnabled(false);
+  setCanvasBuilderEnabled(isEnabled);
+  clearBtn.disabled = !isEnabled;
   submitBtn.disabled = !isEnabled;
 }
 
@@ -280,16 +668,11 @@ async function startNextRound() {
   moleculeFormula.textContent = `Formula: ${round.molecule.formula}`;
   updateHud();
 
-  const modeReady = await initializeDrawingSurface();
+  const modeReady = initializeDrawingSurface();
   if (!modeReady) return;
 
   setRoundInteractionEnabled(true);
-
-  if (session.mode === "solo") {
-    setStatusMessage("Sketch your best structure.");
-  } else {
-    setStatusMessage("Draw and submit before your rival.");
-  }
+  setStatusMessage("Click empty space to add atoms. Click two atoms to add a bond. Double-click atom for lone pairs.");
 
   energyWrap.classList.remove("low");
   timerEl.classList.remove("urgent");
@@ -301,63 +684,11 @@ async function startNextRound() {
   showScreen("game");
 }
 
-async function initializeDrawingSurface() {
-  if (session.drawingMode === "whiteboard") {
-    const ready = await startWebcamStream();
-    if (!ready) {
-      setDrawingMode("canvas");
-      setStatusMessage("Webcam unavailable. Switched to Canvas Mode.", true);
-      return initializeDrawingSurface();
-    }
-
-    canvas.classList.add("hidden");
-    whiteboardVideo.classList.remove("hidden");
-    clearBtn.classList.add("hidden");
-    submitBtn.textContent = "Capture & Submit";
-    return true;
-  }
-
-  stopWebcamStream();
-  drawingEngine.clear();
+function initializeDrawingSurface() {
+  resetCanvasBuilder();
   canvas.classList.remove("hidden");
-  whiteboardVideo.classList.add("hidden");
-  clearBtn.classList.remove("hidden");
   submitBtn.textContent = "Submit Drawing";
   return true;
-}
-
-async function startWebcamStream() {
-  try {
-    stopWebcamStream();
-
-    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-    session.webcamStream = stream;
-    whiteboardVideo.srcObject = stream;
-    await whiteboardVideo.play();
-    return true;
-  } catch {
-    updateRoomStatus("Webcam access denied or unavailable.");
-    return false;
-  }
-}
-
-function stopWebcamStream() {
-  if (!session.webcamStream) return;
-
-  session.webcamStream.getTracks().forEach((track) => track.stop());
-  session.webcamStream = null;
-  whiteboardVideo.srcObject = null;
-}
-
-function captureWhiteboardFrame() {
-  const frameCanvas = document.createElement("canvas");
-  frameCanvas.width = whiteboardVideo.videoWidth || 960;
-  frameCanvas.height = whiteboardVideo.videoHeight || 540;
-
-  const ctx = frameCanvas.getContext("2d");
-  ctx.drawImage(whiteboardVideo, 0, 0, frameCanvas.width, frameCanvas.height);
-
-  return frameCanvas.toDataURL("image/png");
 }
 
 function updateEnergy(secondsLeft) {
@@ -439,16 +770,32 @@ async function finalizeRound(reason) {
     gameScreen.classList.add("lab-flash");
   }
 
-  const drawingDataUrl = session.drawingMode === "whiteboard"
-    ? captureWhiteboardFrame()
-    : drawingEngine.captureDataUrl();
-
-  stopWebcamStream();
+  const parsedDrawing = buildParsedDrawing(canvasBuilder.atoms, canvasBuilder.bonds);
 
   showOverlay(false);
   await delay(ANALYZE_DELAY_MS);
 
-  const roundResult = gameEngine.finishRound(drawingDataUrl);
+  // Ask server to evaluate drawing against the expected molecule.
+  let roundPassed = false;
+  let structuralFeedback = [];
+  let aiExplanation = null;
+  try {
+    const evalResp = await evaluateDrawingWithServer({
+      parsedDrawing,
+      molecule: gameEngine.currentMolecule,
+      categoryKey: session.categoryKey,
+    });
+    roundPassed = evalResp?.passed === true;
+    structuralFeedback = Array.isArray(evalResp?.structuralFeedback) ? evalResp.structuralFeedback : [];
+    aiExplanation = typeof evalResp?.aiExplanation === "string" ? evalResp.aiExplanation : null;
+  } catch (e) {
+    console.warn("Evaluation request failed.", e);
+  }
+
+  const roundResult = gameEngine.finishRound("", 0);
+  roundResult.passed = roundPassed;
+  roundResult.structuralFeedback = structuralFeedback;
+  roundResult.aiExplanation = aiExplanation;
   roundState.lastRoundResult = roundResult;
 
   const key = roundResult.molecule.name;
@@ -487,89 +834,6 @@ async function finalizeRound(reason) {
   hideOverlay();
   renderRoundResults(roundResult, scoreboard);
   showScreen("results");
-}
-
-function renderReference(molecule) {
-  const fallbackText = `Formula reference: ${molecule.formula}`;
-
-  referenceFallback.hidden = true;
-  referencePreview.style.display = "block";
-
-  if (!molecule.referenceImage) {
-    referencePreview.style.display = "none";
-    referenceFallback.hidden = false;
-    referenceFallback.textContent = fallbackText;
-    return;
-  }
-
-  referencePreview.onload = () => {
-    referencePreview.style.display = "block";
-    referenceFallback.hidden = true;
-  };
-
-  referencePreview.onerror = () => {
-    referencePreview.style.display = "none";
-    referenceFallback.hidden = false;
-    referenceFallback.textContent = fallbackText;
-  };
-
-  referencePreview.src = molecule.referenceImage;
-}
-
-function renderRoundResults(roundResult, scoreboard) {
-  const roundWord = `Round ${roundResult.roundNumber} of ${roundResult.totalRounds}`;
-  resultsTitle.textContent = roundResult.isFinalRound ? "Final Results" : "Round Results";
-  resultMolecule.textContent = `${roundWord} | ${roundResult.molecule.name} (${roundResult.molecule.formula})`;
-  resultRoom.textContent = session.mode === "multiplayer" ? `Room: ${scoreboard.roomCode}` : "Mode: Solo";
-
-  resultPlayerName.textContent = scoreboard.localPlayer.name;
-  animateValue(resultPlayerScore, scoreboard.localPlayer.score, 850);
-
-  addReviewBtn.disabled = false;
-  addReviewBtn.textContent = "Add to Review Folder";
-
-  resultScoreNote.textContent = `Round score: ${roundResult.roundScore} | XP earned: ${roundResult.xpEarned}`;
-  resultTotals.textContent = `Total score: ${roundResult.totalScore} | Total XP: ${roundResult.totalXp}`;
-  resultStreak.textContent = `Streak: ${roundResult.streak}`;
-  roundFeedback.textContent = roundResult.feedbackText;
-
-  if (roundResult.streak > 0) {
-    streakIndicator.classList.remove("boost");
-    void streakIndicator.offsetWidth;
-    streakIndicator.classList.add("boost");
-  }
-
-  if (session.mode === "multiplayer" && scoreboard.opponent) {
-    resultOpponentRow.style.display = "flex";
-    resultOpponentName.textContent = scoreboard.opponent.name;
-    animateValue(resultOpponentScore, scoreboard.opponent.score, 850);
-    soloEncouragement.textContent = "";
-
-    if (roundResult.isFinalRound) {
-      const diff = scoreboard.localPlayer.score - scoreboard.opponent.score;
-      if (diff > 0) finalOutcome.textContent = `Match win by ${diff} points.`;
-      else if (diff < 0) finalOutcome.textContent = `Opponent wins by ${Math.abs(diff)} points.`;
-      else finalOutcome.textContent = "Draw match. Perfect rivalry.";
-    } else {
-      finalOutcome.textContent = "";
-    }
-  } else {
-    resultOpponentRow.style.display = "none";
-    finalOutcome.textContent = "";
-    soloEncouragement.textContent = getSoloEncouragement(roundResult.roundScore, roundResult.streak);
-  }
-
-  if (roundResult.isFinalRound) {
-    nextRoundBtn.style.display = "none";
-    playAgainBtn.textContent = "Play New Match";
-  } else {
-    nextRoundBtn.style.display = "inline-flex";
-    playAgainBtn.textContent = "End Match";
-  }
-
-  resultPreview.src = roundResult.drawingDataUrl;
-  resultPreview.style.display = "block";
-  renderReference(roundResult.molecule);
 }
 
 function addCurrentRoundToReview() {
@@ -620,7 +884,6 @@ function startPracticeFromReview(moleculeName) {
   if (!item) return;
 
   setMode("solo");
-  setDrawingMode("canvas");
   roundCountSelect.value = "3";
 
   session.practiceTarget = {
@@ -640,7 +903,6 @@ function startPracticeFromReview(moleculeName) {
 
 function goHome() {
   timerEngine.stop();
-  stopWebcamStream();
   setRoundInteractionEnabled(true);
   hideOverlay();
   addReviewBtn.textContent = "Add to Review Folder";
@@ -649,8 +911,6 @@ function goHome() {
 
 soloModeBtn.addEventListener("click", () => setMode("solo"));
 multiplayerModeBtn.addEventListener("click", () => setMode("multiplayer"));
-canvasModeBtn.addEventListener("click", () => setDrawingMode("canvas"));
-whiteboardModeBtn.addEventListener("click", () => setDrawingMode("whiteboard"));
 createRoomBtn.addEventListener("click", createRoom);
 joinRoomBtn.addEventListener("click", joinRoom);
 startBtn.addEventListener("click", startMatch);
@@ -661,9 +921,13 @@ reviewBtn.addEventListener("click", () => {
 reviewBackBtn.addEventListener("click", () => showScreen("home"));
 nextRoundBtn.addEventListener("click", startNextRound);
 playAgainBtn.addEventListener("click", goHome);
-clearBtn.addEventListener("click", () => drawingEngine.clear());
+clearBtn.addEventListener("click", () => {
+  resetCanvasBuilder();
+});
 submitBtn.addEventListener("click", () => finalizeRound("manual"));
 addReviewBtn.addEventListener("click", addCurrentRoundToReview);
+canvas.addEventListener("click", handleCanvasBuilderClick);
+canvas.addEventListener("dblclick", handleCanvasBuilderDoubleClick);
 
 reviewList.addEventListener("click", (event) => {
   const practiceBtn = event.target.closest(".review-practice");
@@ -682,6 +946,5 @@ reviewList.addEventListener("click", (event) => {
 
 populateCategoryDropdown();
 setMode("solo");
-setDrawingMode("canvas");
 updateReviewButton();
 updateHud();
