@@ -4,9 +4,47 @@ import { TimerEngine } from "./engine/timerEngine.js";
 import { DrawingEngine } from "./engine/drawingEngine.js";
 import { MultiplayerEngine } from "./engine/multiplayerEngine.js";
 import { addToReview, getReviewList, removeFromReview } from "./engine/reviewEngine.js";
-import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({});
+// Client-side helper: call server to evaluate drawings with Gemini
+async function evaluateDrawingWithServer(drawingDataUrl, molecule) {
+  try {
+    const res = await fetch("/api/gemini-evaluate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ drawingDataUrl, molecule }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(text || `status ${res.status}`);
+    }
+
+    return await res.json();
+  } catch (err) {
+    console.error("evaluateDrawingWithServer error:", err);
+    return null;
+  }
+}
+
+async function recognizeDrawingWithServer(drawingDataUrl, categoryKey = null) {
+  try {
+    const res = await fetch("/api/gemini-recognize", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ drawingDataUrl, categoryKey }),
+    });
+
+    if (!res.ok) {
+      const text = await res.text().catch(() => res.statusText);
+      throw new Error(text || `status ${res.status}`);
+    }
+
+    return await res.json();
+  } catch (err) {
+    console.error("recognizeDrawingWithServer error:", err);
+    return null;
+  }
+}
 const ROUND_SECONDS = 90;
 const ANALYZE_DELAY_MS = 1500;
 
@@ -66,6 +104,7 @@ const resultOpponentRow = document.getElementById("result-opponent-row");
 const resultOpponentName = document.getElementById("result-opponent-name");
 const resultOpponentScore = document.getElementById("result-opponent-score");
 const roundFeedback = document.getElementById("round-feedback");
+const aiGuessEl = document.getElementById("ai-guess");
 const resultScoreNote = document.getElementById("result-score-note");
 const resultTotals = document.getElementById("result-totals");
 const resultStreak = document.getElementById("result-streak");
@@ -448,7 +487,39 @@ async function finalizeRound(reason) {
   showOverlay(false);
   await delay(ANALYZE_DELAY_MS);
 
-  const roundResult = gameEngine.finishRound(drawingDataUrl);
+  // Ask server (Gemini) to recognize the drawn molecule among candidates
+  let recognized = null;
+  try {
+    recognized = await recognizeDrawingWithServer(drawingDataUrl, session.categoryKey);
+  } catch (e) {
+    console.warn("Recognition request failed", e);
+  }
+
+  // Ask server to evaluate drawing against the expected molecule as well
+  let evalScore = null;
+  let evalFeedback = null;
+  try {
+    const evalResp = await evaluateDrawingWithServer(drawingDataUrl, gameEngine.currentMolecule);
+    if (evalResp) {
+      if (typeof evalResp.score === "number") evalScore = Math.round(evalResp.score);
+      evalFeedback = evalResp.feedback || evalResp.raw || null;
+    }
+  } catch (e) {
+    console.warn("Evaluation request failed, using fallback scoring.", e);
+  }
+
+  const roundResult = gameEngine.finishRound(drawingDataUrl, evalScore);
+
+  // If recognition returned a top guess, annotate feedback
+  if (recognized && recognized.top) {
+    const guessed = recognized.top.name;
+    const reason = recognized.top.reason || recognized.top.reason || recognized.raw || "";
+    roundResult.aiGuess = { name: guessed, score: recognized.top.score ?? null, reason };
+  }
+
+  if (evalFeedback) {
+    roundResult.modelFeedback = evalFeedback;
+  }
   roundState.lastRoundResult = roundResult;
 
   const key = roundResult.molecule.name;
@@ -532,6 +603,15 @@ function renderRoundResults(roundResult, scoreboard) {
   resultTotals.textContent = `Total score: ${roundResult.totalScore} | Total XP: ${roundResult.totalXp}`;
   resultStreak.textContent = `Streak: ${roundResult.streak}`;
   roundFeedback.textContent = roundResult.feedbackText;
+  if (roundResult.aiGuess) {
+    aiGuessEl.hidden = false;
+    const scoreText = roundResult.aiGuess.score != null ? ` (score ${roundResult.aiGuess.score})` : "";
+    const reason = roundResult.aiGuess.reason ? ` — ${roundResult.aiGuess.reason}` : "";
+    aiGuessEl.textContent = `AI guess: ${roundResult.aiGuess.name}${scoreText}${reason}`;
+  } else {
+    aiGuessEl.hidden = true;
+    aiGuessEl.textContent = "";
+  }
 
   if (roundResult.streak > 0) {
     streakIndicator.classList.remove("boost");
