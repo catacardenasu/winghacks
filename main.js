@@ -4,7 +4,9 @@ import { TimerEngine } from "./engine/timerEngine.js";
 import { DrawingEngine } from "./engine/drawingEngine.js";
 import { MultiplayerEngine } from "./engine/multiplayerEngine.js";
 import { addToReview, getReviewList, removeFromReview } from "./engine/reviewEngine.js";
+import { GoogleGenAI } from "@google/genai";
 
+const ai = new GoogleGenAI({});
 const ROUND_SECONDS = 90;
 const ANALYZE_DELAY_MS = 1500;
 
